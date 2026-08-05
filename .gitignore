@@ -1,0 +1,7 @@
+dist/
+*.zip
+.agents/
+AGENTS.md
+SPEC.md
+FactoryCompression_*/
+reference/
