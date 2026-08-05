@@ -15,6 +15,8 @@ function logger.new(detailed)
     generated = {
       categories = {},
       machines = {},
+      solar_panels = {},
+      accumulators = {},
       items = {},
       equipment_recipes = {},
       batch_recipes = {},
@@ -28,6 +30,7 @@ function logger.new(detailed)
       machines = new_counter(),
       recipes = new_counter(),
       categories = new_counter(),
+      power_entities = new_counter(),
       errors = new_counter()
     },
     notes = {}
@@ -98,6 +101,8 @@ end
 function logger:summary()
   log(config.log_prefix .. " summary: categories=" .. count(self.generated.categories)
     .. ", machines=" .. count(self.generated.machines)
+    .. ", solar_panels=" .. count(self.generated.solar_panels)
+    .. ", accumulators=" .. count(self.generated.accumulators)
     .. ", items=" .. count(self.generated.items)
     .. ", equipment_recipes=" .. count(self.generated.equipment_recipes)
     .. ", batch_recipes=" .. count(self.generated.batch_recipes)

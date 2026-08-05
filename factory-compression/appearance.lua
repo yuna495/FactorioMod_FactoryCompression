@@ -86,6 +86,10 @@ local function tint_animation(animation)
     for _, layer in ipairs(animation.layers) do
       tinted = tinted + tint_animation(layer)
     end
+  elseif #animation > 0 then
+    for _, variation in ipairs(animation) do
+      tinted = tinted + tint_animation(variation)
+    end
   else
     tinted = tinted + tint_layer(animation)
   end
@@ -114,6 +118,20 @@ function appearance.apply_entity_tint(entity)
     for _, field in ipairs(graphics_set_animation_fields) do
       tinted = tinted + tint_animation(entity.graphics_set[field])
     end
+  end
+
+  return tinted
+end
+
+function appearance.apply_power_entity_tint(entity)
+  local tinted = appearance.apply_entity_tint(entity)
+
+  tinted = tinted + tint_animation(entity.picture)
+
+  if type(entity.chargable_graphics) == "table" then
+    tinted = tinted + tint_animation(entity.chargable_graphics.picture)
+    tinted = tinted + tint_animation(entity.chargable_graphics.charge_animation)
+    tinted = tinted + tint_animation(entity.chargable_graphics.discharge_animation)
   end
 
   return tinted

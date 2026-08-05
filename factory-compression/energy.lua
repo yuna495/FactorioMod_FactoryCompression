@@ -6,7 +6,7 @@ function energy.scale_energy_usage(value, multiplier)
   return util.multiply_energy(value, multiplier)
 end
 
-local function scale_emissions_per_minute(emissions_per_minute, multiplier)
+function energy.scale_emissions_per_minute(emissions_per_minute, multiplier)
   if emissions_per_minute == nil then
     return true
   end
@@ -38,7 +38,7 @@ function energy.scale_energy_source(energy_source, multiplier)
     energy_source.drain = scaled
   end
 
-  local ok, reason, detail = scale_emissions_per_minute(energy_source.emissions_per_minute, multiplier)
+  local ok, reason, detail = energy.scale_emissions_per_minute(energy_source.emissions_per_minute, multiplier)
   if not ok then
     return false, reason, detail
   end

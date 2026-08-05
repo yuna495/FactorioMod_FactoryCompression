@@ -3,6 +3,7 @@ local appearance = require("factory-compression.appearance")
 local compatibility = require("factory-compression.compatibility")
 local energy = require("factory-compression.energy")
 local logger_module = require("factory-compression.logger")
+local power = require("factory-compression.power")
 local recipe_categories = require("factory-compression.compat.recipe_categories")
 local util = require("factory-compression.util")
 
@@ -541,6 +542,8 @@ local function generate_batch_recipes(snapshot, category_map, multiplier, logger
       logger:exclude("recipes", entry.name, "generated-recipe-already-exists", util.batch_recipe_name(entry.name), true)
     elseif source_recipe.normal or source_recipe.expensive then
       logger:exclude("recipes", entry.name, "difficulty-variant-recipe", nil, true)
+    elseif power.recipe_is_supported_power_entity_related(snapshot, entry.name, source_recipe) then
+      logger:exclude("recipes", entry.name, "power-equipment-recipe", nil, false)
     else
       local mapped_categories = category_overlap(recipe_categories.get(source_recipe), category_map)
       if #mapped_categories == 0 then
@@ -708,6 +711,8 @@ function generator.run()
       logger:exclude("errors", config.technology_name, reason, nil, true)
     end
   end
+
+  power.run(multiplier, logger)
 
   logger:summary()
 end

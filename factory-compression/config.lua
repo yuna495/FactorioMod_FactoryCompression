@@ -8,6 +8,7 @@ config.ups_prefix = "factory-compression-ups-"
 config.batch_recipe_prefix = "factory-compression-batch-"
 config.category_prefix = "factory-compression-"
 config.technology_name = "factory-compression-ups-machines"
+config.power_technology_name = "factory-compression-ups-power"
 config.overlay_icon = "__FactoryCompression__/graphics/icons/ups-overlay.png"
 
 config.ups_tint = {r = 0.85, g = 0.12, b = 0.12, a = 1.0}
@@ -15,6 +16,11 @@ config.ups_tint = {r = 0.85, g = 0.12, b = 0.12, a = 1.0}
 config.supported_machine_types = {
   "assembling-machine",
   "furnace"
+}
+
+config.supported_power_types = {
+  "solar-panel",
+  "accumulator"
 }
 
 config.item_prototype_types = {
