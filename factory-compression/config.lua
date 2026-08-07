@@ -20,7 +20,10 @@ config.supported_machine_types = {
 
 config.supported_power_types = {
   "solar-panel",
-  "accumulator"
+  "accumulator",
+  "boiler",
+  "generator",
+  "reactor"
 }
 
 config.item_prototype_types = {

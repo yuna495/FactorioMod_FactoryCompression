@@ -12,18 +12,25 @@ compatibility.machine_blacklist = {
 
 compatibility.power_entity_whitelist = {
   ["solar-panel"] = {},
-  accumulator = {}
+  accumulator = {},
+  boiler = {},
+  generator = {},
+  reactor = {}
 }
 
 compatibility.power_entity_blacklist = {
   ["solar-panel"] = {},
-  accumulator = {}
+  accumulator = {},
+  boiler = {},
+  generator = {},
+  reactor = {}
 }
 
 compatibility.recipe_whitelist = {}
 compatibility.recipe_blacklist = {}
 
 compatibility.machine_ingredient_overrides = {}
+compatibility.power_ingredient_overrides = {}
 
 function compatibility.is_machine_whitelisted(prototype_type, name)
   local by_type = compatibility.machine_whitelist[prototype_type]
@@ -59,6 +66,11 @@ function compatibility.get_power_entity_blacklist_reason(prototype_type, name)
     return "blacklisted"
   end
   return value
+end
+
+function compatibility.get_power_ingredient_override(prototype_type, name)
+  local by_type = compatibility.power_ingredient_overrides[prototype_type]
+  return by_type and by_type[name]
 end
 
 function compatibility.is_recipe_whitelisted(name)

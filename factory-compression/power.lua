@@ -9,8 +9,17 @@ local power = {}
 
 local generated_kind_by_type = {
   ["solar-panel"] = "solar_panels",
-  accumulator = "accumulators"
+  accumulator = "accumulators",
+  boiler = "boilers",
+  generator = "generators"
 }
+
+local boiler_energy_source_types = {
+  burner = true,
+  heat = true
+}
+
+local reactor_neighbour_heat_bonus_multiplier = 1.2
 
 local function startup_value(name, fallback)
   local setting = settings.startup[name]
@@ -230,6 +239,132 @@ local function scale_required_energy_field(source, field, multiplier)
   return scaled
 end
 
+local function scale_required_heat_buffer_field(heat_buffer, field, multiplier)
+  if heat_buffer[field] == nil then
+    return nil, "missing-heat-buffer-" .. field
+  end
+
+  local scaled, reason = util.multiply_energy(heat_buffer[field], multiplier)
+  if not scaled then
+    return nil, "unsupported-heat-buffer-" .. field, reason
+  end
+
+  return scaled
+end
+
+local function validate_heat_buffer(entity, specific_heat_multiplier, max_transfer_multiplier)
+  if type(entity.heat_buffer) ~= "table" then
+    return nil, "missing-heat-buffer"
+  end
+
+  local specific_heat, reason, detail = scale_required_heat_buffer_field(
+    entity.heat_buffer,
+    "specific_heat",
+    specific_heat_multiplier
+  )
+  if not specific_heat then
+    return nil, reason, detail
+  end
+
+  local max_transfer
+  max_transfer, reason, detail = scale_required_heat_buffer_field(
+    entity.heat_buffer,
+    "max_transfer",
+    max_transfer_multiplier
+  )
+  if not max_transfer then
+    return nil, reason, detail
+  end
+
+  return {
+    specific_heat = specific_heat,
+    max_transfer = max_transfer
+  }
+end
+
+local function validate_required_fluid_box(entity, field)
+  local fluid_box = entity[field]
+  if type(fluid_box) ~= "table" then
+    return nil, "missing-" .. field
+  end
+
+  if type(fluid_box.volume) ~= "number" then
+    return nil, "missing-" .. field .. "-volume"
+  end
+
+  return true
+end
+
+local function validate_optional_fluid_box(entity, field)
+  if entity[field] == nil then
+    return true
+  end
+
+  return validate_required_fluid_box(entity, field)
+end
+
+local function validate_indexed_fluid_boxes(entity)
+  if entity.fluid_boxes == nil then
+    return true
+  end
+
+  if type(entity.fluid_boxes) ~= "table" then
+    return nil, "unsupported-fluid_boxes", "not-a-table"
+  end
+
+  for key, fluid_box in pairs(entity.fluid_boxes) do
+    if type(fluid_box) ~= "table" then
+      return nil, "unsupported-fluid_boxes", tostring(key)
+    end
+    if type(fluid_box.volume) ~= "number" then
+      return nil, "missing-fluid_boxes-volume", tostring(key)
+    end
+  end
+
+  return true
+end
+
+local function scale_fluid_box_volume(fluid_box, multiplier)
+  if type(fluid_box) == "table" and type(fluid_box.volume) == "number" then
+    fluid_box.volume = fluid_box.volume * multiplier
+  end
+end
+
+local function scale_power_fluid_boxes(entity, multiplier)
+  scale_fluid_box_volume(entity.fluid_box, multiplier)
+  scale_fluid_box_volume(entity.input_fluid_box, multiplier)
+  scale_fluid_box_volume(entity.output_fluid_box, multiplier)
+
+  if type(entity.fluid_boxes) == "table" then
+    for _, fluid_box in pairs(entity.fluid_boxes) do
+      scale_fluid_box_volume(fluid_box, multiplier)
+    end
+  end
+end
+
+local function validate_boiler_energy_source(entity)
+  if type(entity.energy_source) ~= "table" then
+    return nil, "missing-energy-source"
+  end
+
+  local source_type = entity.energy_source.type
+  if not boiler_energy_source_types[source_type] then
+    return nil, "unsupported-boiler-energy-source", tostring(source_type)
+  end
+
+  return entity.energy_source
+end
+
+local function validate_energy_source(source, multiplier, include_drain)
+  local copy = table.deepcopy(source)
+
+  if include_drain then
+    return energy.scale_energy_source(copy, multiplier)
+  end
+
+  return energy.scale_emissions_per_minute(copy.emissions_per_minute, multiplier)
+end
+
 local function validate_solar_panel(entity, multiplier)
   local energy_source, reason = require_electric_source(entity)
   if not energy_source then
@@ -288,14 +423,278 @@ local function validate_accumulator(entity, multiplier)
   return scaled
 end
 
+local function validate_boiler(entity, multiplier)
+  local source, reason, detail = validate_boiler_energy_source(entity)
+  if not source then
+    return nil, reason, detail
+  end
+
+  if type(entity.target_temperature) ~= "number" then
+    return nil, "missing-target-temperature"
+  end
+
+  local energy_consumption
+  energy_consumption, detail = util.multiply_energy(entity.energy_consumption, multiplier)
+  if not energy_consumption then
+    return nil, "unsupported-energy-consumption", detail
+  end
+
+  local ok
+  ok, reason, detail = validate_required_fluid_box(entity, "fluid_box")
+  if not ok then
+    return nil, reason, detail
+  end
+
+  ok, reason, detail = validate_optional_fluid_box(entity, "input_fluid_box")
+  if not ok then
+    return nil, reason, detail
+  end
+
+  ok, reason, detail = validate_required_fluid_box(entity, "output_fluid_box")
+  if not ok then
+    return nil, reason, detail
+  end
+
+  ok, reason, detail = validate_indexed_fluid_boxes(entity)
+  if not ok then
+    return nil, reason, detail
+  end
+
+  ok, reason, detail = validate_energy_source(source, multiplier, true)
+  if not ok then
+    return nil, reason, detail
+  end
+
+  return {
+    energy_consumption = energy_consumption
+  }
+end
+
+local function validate_generator(entity, multiplier)
+  local source, reason = require_electric_source(entity)
+  if not source then
+    return nil, reason
+  end
+
+  if type(entity.fluid_usage_per_tick) ~= "number" then
+    return nil, "missing-fluid-usage-per-tick"
+  end
+
+  if entity.fluid_usage_per_tick <= 0 then
+    return nil, "non-positive-fluid-usage-per-tick"
+  end
+
+  local ok, detail
+  ok, reason, detail = validate_required_fluid_box(entity, "fluid_box")
+  if not ok then
+    return nil, reason, detail
+  end
+
+  ok, reason, detail = validate_indexed_fluid_boxes(entity)
+  if not ok then
+    return nil, reason, detail
+  end
+
+  local scaled = {
+    fluid_usage_per_tick = entity.fluid_usage_per_tick * multiplier
+  }
+
+  if entity.max_power_output ~= nil then
+    scaled.max_power_output, detail = util.multiply_energy(entity.max_power_output, multiplier)
+    if not scaled.max_power_output then
+      return nil, "unsupported-max-power-output", detail
+    end
+  end
+
+  ok, reason, detail = validate_energy_source(source, multiplier, false)
+  if not ok then
+    return nil, reason, detail
+  end
+
+  return scaled
+end
+
+local function reactor_neighbour_bonus(entity)
+  if entity.neighbour_bonus == nil then
+    return 0
+  end
+
+  if type(entity.neighbour_bonus) ~= "number" then
+    return nil, "unsupported-neighbour-bonus"
+  end
+
+  return entity.neighbour_bonus
+end
+
+local function validate_reactor(entity, multiplier)
+  if type(entity.energy_source) ~= "table" then
+    return nil, "missing-energy-source"
+  end
+
+  if entity.energy_source.type ~= "burner" then
+    return nil, "unsupported-reactor-energy-source", tostring(entity.energy_source.type)
+  end
+
+  local neighbour_bonus, reason = reactor_neighbour_bonus(entity)
+  if neighbour_bonus == nil then
+    return nil, reason
+  end
+
+  local has_neighbour_bonus = neighbour_bonus > 0
+  if has_neighbour_bonus and type(entity.energy_source.effectivity) ~= "number" then
+    return nil, "missing-reactor-energy-source-effectivity"
+  end
+
+  local consumption, detail = util.multiply_energy(entity.consumption, multiplier)
+  if not consumption then
+    return nil, "unsupported-consumption", detail
+  end
+
+  local max_transfer_multiplier = multiplier
+  if has_neighbour_bonus then
+    max_transfer_multiplier = multiplier * reactor_neighbour_heat_bonus_multiplier
+  end
+
+  local heat_buffer
+  heat_buffer, reason, detail = validate_heat_buffer(entity, multiplier, max_transfer_multiplier)
+  if not heat_buffer then
+    return nil, reason, detail
+  end
+
+  local ok
+  ok, reason, detail = validate_energy_source(entity.energy_source, multiplier, false)
+  if not ok then
+    return nil, reason, detail
+  end
+
+  local scaled = {
+    kind = has_neighbour_bonus and "reactors" or "heating_towers",
+    consumption = consumption,
+    heat_buffer = heat_buffer
+  }
+
+  if has_neighbour_bonus then
+    scaled.effectivity = entity.energy_source.effectivity * reactor_neighbour_heat_bonus_multiplier
+  end
+
+  return scaled
+end
+
 local function validate_power_entity(entry, multiplier)
   if entry.prototype_type == "solar-panel" then
     return validate_solar_panel(entry.prototype, multiplier)
   elseif entry.prototype_type == "accumulator" then
     return validate_accumulator(entry.prototype, multiplier)
+  elseif entry.prototype_type == "boiler" then
+    return validate_boiler(entry.prototype, multiplier)
+  elseif entry.prototype_type == "generator" then
+    return validate_generator(entry.prototype, multiplier)
+  elseif entry.prototype_type == "reactor" then
+    return validate_reactor(entry.prototype, multiplier)
   end
 
   return nil, "unsupported-power-type"
+end
+
+local function fluid_filter(fluid_box)
+  if type(fluid_box) ~= "table" then
+    return nil
+  end
+
+  return fluid_box.filter
+end
+
+local function filters_match(output_filter, input_filter)
+  return output_filter == nil or input_filter == nil or output_filter == input_filter
+end
+
+local function generator_minimum_temperature(generator)
+  if type(generator.fluid_box) == "table" and type(generator.fluid_box.minimum_temperature) == "number" then
+    return generator.fluid_box.minimum_temperature
+  end
+
+  if type(generator.minimum_temperature) == "number" then
+    return generator.minimum_temperature
+  end
+
+  return nil
+end
+
+local function generator_maximum_temperature(generator)
+  if type(generator.maximum_temperature) == "number" then
+    return generator.maximum_temperature
+  end
+
+  if type(generator.fluid_box) == "table" and type(generator.fluid_box.maximum_temperature) == "number" then
+    return generator.fluid_box.maximum_temperature
+  end
+
+  return nil
+end
+
+local function boiler_can_supply_generator(boiler, generator)
+  if not filters_match(fluid_filter(boiler.output_fluid_box), fluid_filter(generator.fluid_box)) then
+    return false
+  end
+
+  local target_temperature = boiler.target_temperature
+  if type(target_temperature) ~= "number" then
+    return false
+  end
+
+  local minimum_temperature = generator_minimum_temperature(generator)
+  if minimum_temperature and target_temperature < minimum_temperature then
+    return false
+  end
+
+  local maximum_temperature = generator_maximum_temperature(generator)
+  if maximum_temperature and target_temperature > maximum_temperature then
+    return false
+  end
+
+  return true
+end
+
+local function keep_boiler_generator_pairs(selected, logger)
+  local boilers = {}
+  local generators = {}
+
+  for _, entry in ipairs(selected) do
+    if entry.source.prototype_type == "boiler" then
+      table.insert(boilers, entry)
+    elseif entry.source.prototype_type == "generator" then
+      table.insert(generators, entry)
+    end
+  end
+
+  if #boilers == 0 and #generators == 0 then
+    return selected
+  end
+
+  local paired_boilers = {}
+  local paired_generators = {}
+
+  for _, boiler in ipairs(boilers) do
+    for _, generator in ipairs(generators) do
+      if boiler_can_supply_generator(boiler.source.prototype, generator.source.prototype) then
+        paired_boilers[boiler.source.name] = true
+        paired_generators[generator.source.name] = true
+      end
+    end
+  end
+
+  local filtered = {}
+  for _, entry in ipairs(selected) do
+    if entry.source.prototype_type == "boiler" and not paired_boilers[entry.source.name] then
+      logger:exclude("power_entities", entry.source.name, "no-compatible-generator", nil, true)
+    elseif entry.source.prototype_type == "generator" and not paired_generators[entry.source.name] then
+      logger:exclude("power_entities", entry.source.name, "no-compatible-boiler", nil, true)
+    else
+      table.insert(filtered, entry)
+    end
+  end
+
+  return filtered
 end
 
 local function select_power_entities(snapshot, multiplier, logger)
@@ -330,7 +729,7 @@ local function select_power_entities(snapshot, multiplier, logger)
     end
   end
 
-  return selected
+  return keep_boiler_generator_pairs(selected, logger)
 end
 
 local function update_minable(entity, item_name)
@@ -343,6 +742,11 @@ local function update_minable(entity, item_name)
   entity.minable.results = nil
 end
 
+local function apply_scaled_heat_buffer(entity, scaled)
+  entity.heat_buffer.specific_heat = scaled.heat_buffer.specific_heat
+  entity.heat_buffer.max_transfer = scaled.heat_buffer.max_transfer
+end
+
 local function apply_scaled_energy_source(entity, selected, multiplier)
   if selected.source.prototype_type == "accumulator" then
     entity.energy_source.buffer_capacity = selected.scaled.buffer_capacity
@@ -352,6 +756,21 @@ local function apply_scaled_energy_source(entity, selected, multiplier)
     if selected.scaled.drain then
       entity.energy_source.drain = selected.scaled.drain
     end
+
+    local ok, reason, detail = energy.scale_emissions_per_minute(entity.energy_source.emissions_per_minute, multiplier)
+    if not ok then
+      return false, reason, detail
+    end
+
+    return true
+  end
+
+  if selected.source.prototype_type == "boiler" then
+    return energy.scale_energy_source(entity.energy_source, multiplier)
+  end
+
+  if selected.source.prototype_type == "reactor" then
+    return energy.scale_emissions_per_minute(entity.energy_source.emissions_per_minute, multiplier)
   end
 
   local ok, reason, detail = energy.scale_emissions_per_minute(entity.energy_source.emissions_per_minute, multiplier)
@@ -374,6 +793,21 @@ local function build_power_entity(selected, multiplier)
 
   if selected.source.prototype_type == "solar-panel" then
     entity.production = selected.scaled.production
+  elseif selected.source.prototype_type == "boiler" then
+    entity.energy_consumption = selected.scaled.energy_consumption
+    scale_power_fluid_boxes(entity, multiplier)
+  elseif selected.source.prototype_type == "generator" then
+    entity.fluid_usage_per_tick = selected.scaled.fluid_usage_per_tick
+    if selected.scaled.max_power_output ~= nil then
+      entity.max_power_output = selected.scaled.max_power_output
+    end
+    scale_power_fluid_boxes(entity, multiplier)
+  elseif selected.source.prototype_type == "reactor" then
+    entity.consumption = selected.scaled.consumption
+    apply_scaled_heat_buffer(entity, selected.scaled)
+    if selected.scaled.effectivity ~= nil then
+      entity.energy_source.effectivity = selected.scaled.effectivity
+    end
   end
 
   local ok, reason, detail = apply_scaled_energy_source(entity, selected, multiplier)
@@ -416,8 +850,7 @@ local function add_ingredient(ingredients, name, amount)
   return false
 end
 
-local function build_power_recipe(selected, multiplier)
-  local generated_name = util.generated_entity_name(selected.source.name)
+local function build_default_power_ingredients(selected, multiplier)
   local ingredients = {
     {type = "item", name = selected.source_item.name, amount = multiplier}
   }
@@ -425,6 +858,22 @@ local function build_power_recipe(selected, multiplier)
   add_ingredient(ingredients, "speed-module-3", startup_value("factory-compression-speed-module-3-count", 5))
   add_ingredient(ingredients, "productivity-module-3", startup_value("factory-compression-productivity-module-3-count", 5))
   add_ingredient(ingredients, "efficiency-module-3", startup_value("factory-compression-efficiency-module-3-count", 5))
+
+  return ingredients
+end
+
+local function build_power_ingredients(selected, multiplier)
+  local override = compatibility.get_power_ingredient_override(selected.source.prototype_type, selected.source.name)
+  if type(override) == "table" then
+    return table.deepcopy(override)
+  end
+
+  return build_default_power_ingredients(selected, multiplier)
+end
+
+local function build_power_recipe(selected, multiplier)
+  local generated_name = util.generated_entity_name(selected.source.name)
+  local ingredients = build_power_ingredients(selected, multiplier)
 
   local recipe = {
     type = "recipe",
@@ -441,6 +890,10 @@ local function build_power_recipe(selected, multiplier)
   appearance.apply_icon_overlay(recipe, selected.source_item.prototype)
 
   return recipe
+end
+
+local function generated_kind_for(selected)
+  return selected.scaled.kind or generated_kind_by_type[selected.source.prototype_type]
 end
 
 local function generate_power_entities(selected_entities, multiplier, logger)
@@ -469,7 +922,7 @@ local function generate_power_entities(selected_entities, multiplier, logger)
         table.insert(prototypes, recipe)
         table.insert(unlock_recipe_names, recipe.name)
 
-        logger:generated_prototype(generated_kind_by_type[selected.source.prototype_type], entity.name)
+        logger:generated_prototype(generated_kind_for(selected), entity.name)
         logger:generated_prototype("items", item.name)
         logger:generated_prototype("equipment_recipes", recipe.name)
         logger:appearance_result(entity.name, tinted_layers_or_reason, "no-safe-animation-layer")

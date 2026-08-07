@@ -4,7 +4,9 @@ local appearance = {}
 
 local direction_fields = {"north", "east", "south", "west"}
 local entity_animation_fields = {"animation", "idle_animation"}
+local power_entity_animation_fields = {"picture", "horizontal_animation", "vertical_animation"}
 local graphics_set_animation_fields = {"animation", "idle_animation"}
+local boiler_picture_fields = {"structure", "patch"}
 
 local function icon_layer_from(prototype)
   if type(prototype) ~= "table" then
@@ -126,7 +128,20 @@ end
 function appearance.apply_power_entity_tint(entity)
   local tinted = appearance.apply_entity_tint(entity)
 
-  tinted = tinted + tint_animation(entity.picture)
+  for _, field in ipairs(power_entity_animation_fields) do
+    tinted = tinted + tint_animation(entity[field])
+  end
+
+  if type(entity.pictures) == "table" then
+    for _, direction in ipairs(direction_fields) do
+      local picture = entity.pictures[direction]
+      if type(picture) == "table" then
+        for _, field in ipairs(boiler_picture_fields) do
+          tinted = tinted + tint_animation(picture[field])
+        end
+      end
+    end
+  end
 
   if type(entity.chargable_graphics) == "table" then
     tinted = tinted + tint_animation(entity.chargable_graphics.picture)

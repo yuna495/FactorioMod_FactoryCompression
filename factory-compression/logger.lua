@@ -17,6 +17,10 @@ function logger.new(detailed)
       machines = {},
       solar_panels = {},
       accumulators = {},
+      boilers = {},
+      generators = {},
+      reactors = {},
+      heating_towers = {},
       items = {},
       equipment_recipes = {},
       batch_recipes = {},
@@ -103,6 +107,10 @@ function logger:summary()
     .. ", machines=" .. count(self.generated.machines)
     .. ", solar_panels=" .. count(self.generated.solar_panels)
     .. ", accumulators=" .. count(self.generated.accumulators)
+    .. ", boilers=" .. count(self.generated.boilers)
+    .. ", generators=" .. count(self.generated.generators)
+    .. ", reactors=" .. count(self.generated.reactors)
+    .. ", heating_towers=" .. count(self.generated.heating_towers)
     .. ", items=" .. count(self.generated.items)
     .. ", equipment_recipes=" .. count(self.generated.equipment_recipes)
     .. ", batch_recipes=" .. count(self.generated.batch_recipes)
