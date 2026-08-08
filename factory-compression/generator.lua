@@ -5,6 +5,7 @@ local energy = require("factory-compression.energy")
 local logger_module = require("factory-compression.logger")
 local power = require("factory-compression.power")
 local recipe_categories = require("factory-compression.compat.recipe_categories")
+local technology = require("factory-compression.technology")
 local util = require("factory-compression.util")
 
 local generator = {}
@@ -297,6 +298,19 @@ local function copy_unlock_techs(snapshot, recipe_name)
   return unlocks
 end
 
+local function source_recipe_names_for_item(snapshot, item_name)
+  local names = {}
+
+  for _, recipe in ipairs(snapshot.recipes) do
+    if util.recipe_produces_item(recipe.prototype, item_name) then
+      table.insert(names, recipe.name)
+    end
+  end
+
+  table.sort(names)
+  return names
+end
+
 local function scale_item_number(value, multiplier)
   local scaled = value * multiplier
   if scaled > config.item_amount_max then
@@ -532,6 +546,7 @@ end
 
 local function generate_batch_recipes(snapshot, category_map, multiplier, logger)
   local generated = {}
+  local unlock_metadata = {}
 
   for _, entry in ipairs(snapshot.recipes) do
     local source_recipe = entry.prototype
@@ -563,6 +578,9 @@ local function generate_batch_recipes(snapshot, category_map, multiplier, logger
           else
             local batch_recipe = build_batch_recipe(snapshot, source_recipe, entry.name, mapped_categories, scaled_payload, multiplier)
             table.insert(generated, batch_recipe)
+            unlock_metadata[batch_recipe.name] = {
+              source_recipes = {entry.name}
+            }
             logger:generated_prototype("batch_recipes", batch_recipe.name)
           end
         end
@@ -570,12 +588,13 @@ local function generate_batch_recipes(snapshot, category_map, multiplier, logger
     end
   end
 
-  return generated
+  return generated, unlock_metadata
 end
 
-local function generate_machines(selected_machines, category_map, multiplier, logger)
+local function generate_machines(snapshot, selected_machines, category_map, multiplier, logger)
   local prototypes = {}
   local unlock_recipe_names = {}
+  local unlock_metadata = {}
 
   for _, selected in ipairs(selected_machines) do
     local generated_name = util.generated_entity_name(selected.source.name)
@@ -598,6 +617,9 @@ local function generate_machines(selected_machines, category_map, multiplier, lo
         table.insert(prototypes, item)
         table.insert(prototypes, recipe)
         table.insert(unlock_recipe_names, recipe.name)
+        unlock_metadata[recipe.name] = {
+          source_recipes = source_recipe_names_for_item(snapshot, selected.source_item.name)
+        }
 
         logger:generated_prototype("machines", entity.name)
         logger:generated_prototype("items", item.name)
@@ -607,7 +629,7 @@ local function generate_machines(selected_machines, category_map, multiplier, lo
     end
   end
 
-  return prototypes, unlock_recipe_names
+  return prototypes, unlock_recipe_names, unlock_metadata
 end
 
 local function add_default_prerequisites(prerequisites)
@@ -616,61 +638,50 @@ local function add_default_prerequisites(prerequisites)
       prerequisites[tech_name] = true
     end
   end
+
+  technology.add_science_pack_prerequisites(prerequisites)
 end
 
-local function science_pack_ingredients()
-  local ingredients = {}
-  for _, name in ipairs({
-    "automation-science-pack",
-    "logistic-science-pack",
-    "chemical-science-pack",
-    "production-science-pack",
-    "utility-science-pack"
-  }) do
-    if util.item_exists(name) then
-      table.insert(ingredients, {name, 1})
-    end
-  end
-  return ingredients
-end
-
-local function build_technology(unlock_recipe_names, prerequisites)
+local function build_technology(unlock_recipe_names, prerequisites, multiplier)
   if #unlock_recipe_names == 0 then
     return nil, "no-unlock-recipes"
   end
 
-  local ingredients = science_pack_ingredients()
+  local ingredients = technology.science_pack_ingredients()
   if #ingredients == 0 then
     return nil, "no-science-packs"
   end
 
-  local effects = {}
-  table.sort(unlock_recipe_names)
-  for _, recipe_name in ipairs(unlock_recipe_names) do
-    table.insert(effects, {
-      type = "unlock-recipe",
-      recipe = recipe_name
-    })
-  end
-
-  local technology = {
+  local prototype = {
     type = "technology",
     name = config.technology_name,
     icon = "__base__/graphics/technology/automation-3.png",
     icon_size = 256,
     prerequisites = util.set_to_sorted_array(prerequisites),
-    effects = effects,
     unit = {
-      count = 1000,
+      count = technology.research_count(multiplier),
       ingredients = ingredients,
       time = 60
     },
     order = "z[factory-compression]-a[ups-machines]"
   }
 
-  appearance.apply_icon_overlay(technology)
+  appearance.apply_icon_overlay(prototype)
 
-  return technology
+  return prototype
+end
+
+local function build_unlock_data(unlock_metadata)
+  return {
+    type = "mod-data",
+    name = config.machine_unlock_data_name,
+    data_type = "factory-compression.unlocks",
+    hidden = true,
+    data = {
+      technology = config.technology_name,
+      recipes = unlock_metadata
+    }
+  }
 end
 
 function generator.run()
@@ -681,8 +692,8 @@ function generator.run()
   local snapshot = collect_snapshot()
   local selected_machines = select_machines(snapshot, multiplier, logger)
   local category_map = create_recipe_categories(selected_machines, logger)
-  local machine_prototypes, machine_recipe_unlocks = generate_machines(selected_machines, category_map, multiplier, logger)
-  local batch_recipes = generate_batch_recipes(snapshot, category_map, multiplier, logger)
+  local machine_prototypes, machine_recipe_unlocks, machine_unlock_metadata = generate_machines(snapshot, selected_machines, category_map, multiplier, logger)
+  local batch_recipes, batch_unlock_metadata = generate_batch_recipes(snapshot, category_map, multiplier, logger)
 
   if #machine_prototypes > 0 then
     data:extend(machine_prototypes)
@@ -691,6 +702,12 @@ function generator.run()
   if #batch_recipes > 0 then
     data:extend(batch_recipes)
   end
+
+  for recipe_name, metadata in pairs(batch_unlock_metadata) do
+    machine_unlock_metadata[recipe_name] = metadata
+  end
+
+  data:extend({build_unlock_data(machine_unlock_metadata)})
 
   local unlock_recipe_names = {}
   for _, name in ipairs(machine_recipe_unlocks) do
@@ -706,7 +723,7 @@ function generator.run()
   if data.raw.technology[config.technology_name] then
     logger:exclude("errors", config.technology_name, "technology-already-exists", nil, true)
   else
-    local technology, reason = build_technology(unlock_recipe_names, prerequisites)
+    local technology, reason = build_technology(unlock_recipe_names, prerequisites, multiplier)
     if technology then
       data:extend({technology})
       logger:generated_prototype("technologies", technology.name)

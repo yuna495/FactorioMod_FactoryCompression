@@ -91,17 +91,41 @@ function util.item_exists(name)
   return false
 end
 
+function util.product_name(product)
+  if type(product) ~= "table" then
+    return nil
+  end
+
+  if product.type ~= nil and product.type ~= "item" then
+    return nil
+  end
+
+  return product.name or product[1]
+end
+
+function util.recipe_produces_item(recipe, item_name)
+  if recipe.result == item_name then
+    return true
+  end
+
+  if type(recipe.results) == "table" then
+    for _, product in ipairs(recipe.results) do
+      if util.product_name(product) == item_name then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
 local function first_result_name(results)
   if type(results) ~= "table" or #results ~= 1 then
     return nil
   end
 
   local result = results[1]
-  if type(result) == "table" and (result.type == nil or result.type == "item") then
-    return result.name or result[1]
-  end
-
-  return nil
+  return util.product_name(result)
 end
 
 function util.find_source_item(snapshot, machine)

@@ -3,6 +3,7 @@ local compatibility = require("factory-compression.compatibility")
 local config = require("factory-compression.config")
 local energy = require("factory-compression.energy")
 local recipe_categories = require("factory-compression.compat.recipe_categories")
+local technology = require("factory-compression.technology")
 local util = require("factory-compression.util")
 
 local power = {}
@@ -89,43 +90,6 @@ local function collect_snapshot()
   return snapshot
 end
 
-local function copy_unlock_techs(snapshot, recipe_name)
-  local unlocks = {}
-  for _, tech_name in ipairs(snapshot.recipe_unlocks[recipe_name] or {}) do
-    local tech = snapshot.technologies_by_name[tech_name]
-    if tech and not tech.hidden and tech.enabled ~= false then
-      table.insert(unlocks, tech_name)
-    end
-  end
-  return unlocks
-end
-
-local function product_name(product)
-  if type(product) ~= "table" then
-    return nil
-  end
-  if product.type ~= nil and product.type ~= "item" then
-    return nil
-  end
-  return product.name or product[1]
-end
-
-local function recipe_produces_item(recipe, item_name)
-  if recipe.result == item_name then
-    return true
-  end
-
-  if type(recipe.results) == "table" then
-    for _, product in ipairs(recipe.results) do
-      if product_name(product) == item_name then
-        return true
-      end
-    end
-  end
-
-  return false
-end
-
 local function recipe_item_results(recipe)
   local item_names = {}
 
@@ -135,7 +99,7 @@ local function recipe_item_results(recipe)
 
   if type(recipe.results) == "table" then
     for _, product in ipairs(recipe.results) do
-      local name = product_name(product)
+      local name = util.product_name(product)
       if name then
         table.insert(item_names, name)
       end
@@ -200,18 +164,17 @@ function power.recipe_is_supported_power_entity_related(snapshot, recipe_name, r
   return false
 end
 
-local function collect_source_prerequisites(snapshot, source_item_name)
-  local prerequisites = {}
+local function source_recipe_names_for_item(snapshot, item_name)
+  local names = {}
 
   for _, recipe in ipairs(snapshot.recipes) do
-    if recipe_produces_item(recipe.prototype, source_item_name) then
-      for _, tech_name in ipairs(copy_unlock_techs(snapshot, recipe.name)) do
-        prerequisites[tech_name] = true
-      end
+    if util.recipe_produces_item(recipe.prototype, item_name) then
+      table.insert(names, recipe.name)
     end
   end
 
-  return prerequisites
+  table.sort(names)
+  return names
 end
 
 local function require_electric_source(entity)
@@ -896,9 +859,10 @@ local function generated_kind_for(selected)
   return selected.scaled.kind or generated_kind_by_type[selected.source.prototype_type]
 end
 
-local function generate_power_entities(selected_entities, multiplier, logger)
+local function generate_power_entities(snapshot, selected_entities, multiplier, logger)
   local prototypes = {}
   local unlock_recipe_names = {}
+  local unlock_metadata = {}
 
   for _, selected in ipairs(selected_entities) do
     local generated_name = util.generated_entity_name(selected.source.name)
@@ -921,6 +885,9 @@ local function generate_power_entities(selected_entities, multiplier, logger)
         table.insert(prototypes, item)
         table.insert(prototypes, recipe)
         table.insert(unlock_recipe_names, recipe.name)
+        unlock_metadata[recipe.name] = {
+          source_recipes = source_recipe_names_for_item(snapshot, selected.source_item.name)
+        }
 
         logger:generated_prototype(generated_kind_for(selected), entity.name)
         logger:generated_prototype("items", item.name)
@@ -930,7 +897,7 @@ local function generate_power_entities(selected_entities, multiplier, logger)
     end
   end
 
-  return prototypes, unlock_recipe_names
+  return prototypes, unlock_recipe_names, unlock_metadata
 end
 
 local function add_default_power_prerequisites(prerequisites)
@@ -939,85 +906,70 @@ local function add_default_power_prerequisites(prerequisites)
       prerequisites[tech_name] = true
     end
   end
+
+  technology.add_science_pack_prerequisites(prerequisites)
 end
 
-local function science_pack_ingredients()
-  local ingredients = {}
-  for _, name in ipairs({
-    "automation-science-pack",
-    "logistic-science-pack",
-    "chemical-science-pack",
-    "production-science-pack",
-    "utility-science-pack"
-  }) do
-    if util.item_exists(name) then
-      table.insert(ingredients, {name, 1})
-    end
-  end
-  return ingredients
-end
-
-local function build_technology(unlock_recipe_names, prerequisites)
+local function build_technology(unlock_recipe_names, prerequisites, multiplier)
   if #unlock_recipe_names == 0 then
     return nil, "no-unlock-recipes"
   end
 
-  local ingredients = science_pack_ingredients()
+  local ingredients = technology.science_pack_ingredients()
   if #ingredients == 0 then
     return nil, "no-science-packs"
   end
 
-  local effects = {}
-  table.sort(unlock_recipe_names)
-  for _, recipe_name in ipairs(unlock_recipe_names) do
-    table.insert(effects, {
-      type = "unlock-recipe",
-      recipe = recipe_name
-    })
-  end
-
-  local technology = {
+  local prototype = {
     type = "technology",
     name = config.power_technology_name,
     icon = "__base__/graphics/technology/electric-energy-acumulators.png",
     icon_size = 256,
     prerequisites = util.set_to_sorted_array(prerequisites),
-    effects = effects,
     unit = {
-      count = 1000,
+      count = technology.research_count(multiplier),
       ingredients = ingredients,
       time = 60
     },
     order = "z[factory-compression]-b[ups-power]"
   }
 
-  appearance.apply_icon_overlay(technology)
+  appearance.apply_icon_overlay(prototype)
 
-  return technology
+  return prototype
+end
+
+local function build_unlock_data(unlock_metadata)
+  return {
+    type = "mod-data",
+    name = config.power_unlock_data_name,
+    data_type = "factory-compression.unlocks",
+    hidden = true,
+    data = {
+      technology = config.power_technology_name,
+      recipes = unlock_metadata
+    }
+  }
 end
 
 function power.run(multiplier, logger)
   local snapshot = collect_snapshot()
   local selected_entities = select_power_entities(snapshot, multiplier, logger)
-  local prototypes, unlock_recipe_names = generate_power_entities(selected_entities, multiplier, logger)
+  local prototypes, unlock_recipe_names, unlock_metadata = generate_power_entities(snapshot, selected_entities, multiplier, logger)
 
   if #prototypes > 0 then
     data:extend(prototypes)
   end
 
+  data:extend({build_unlock_data(unlock_metadata)})
+
   local prerequisites = {}
   add_default_power_prerequisites(prerequisites)
-  for _, selected in ipairs(selected_entities) do
-    local source_prerequisites = collect_source_prerequisites(snapshot, selected.source_item.name)
-    for tech_name in pairs(source_prerequisites) do
-      prerequisites[tech_name] = true
-    end
-  end
 
   if data.raw.technology[config.power_technology_name] then
     logger:exclude("errors", config.power_technology_name, "technology-already-exists", nil, true)
   else
-    local technology, reason = build_technology(unlock_recipe_names, prerequisites)
+    local technology, reason = build_technology(unlock_recipe_names, prerequisites, multiplier)
     if technology then
       data:extend({technology})
       logger:generated_prototype("technologies", technology.name)

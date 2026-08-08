@@ -9,9 +9,38 @@ config.batch_recipe_prefix = "factory-compression-batch-"
 config.category_prefix = "factory-compression-"
 config.technology_name = "factory-compression-ups-machines"
 config.power_technology_name = "factory-compression-ups-power"
+config.machine_unlock_data_name = "factory-compression-machine-unlocks"
+config.power_unlock_data_name = "factory-compression-power-unlocks"
 config.overlay_icon = "__FactoryCompression__/graphics/icons/ups-overlay.png"
 
 config.ups_tint = {r = 0.85, g = 0.12, b = 0.12, a = 1.0}
+
+config.science_pack_cost_per_multiplier = 5000
+
+config.base_science_packs = {
+  "automation-science-pack",
+  "logistic-science-pack",
+  "military-science-pack",
+  "chemical-science-pack",
+  "production-science-pack",
+  "utility-science-pack",
+  "space-science-pack"
+}
+
+config.space_age_science_packs = {
+  "automation-science-pack",
+  "logistic-science-pack",
+  "military-science-pack",
+  "chemical-science-pack",
+  "production-science-pack",
+  "utility-science-pack",
+  "space-science-pack",
+  "metallurgic-science-pack",
+  "electromagnetic-science-pack",
+  "agricultural-science-pack",
+  "cryogenic-science-pack",
+  "promethium-science-pack"
+}
 
 config.supported_machine_types = {
   "assembling-machine",
