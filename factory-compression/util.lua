@@ -1,6 +1,44 @@
 local config = require("factory-compression.config")
+local recipe_categories = require("factory-compression.compat.recipe_categories")
 
 local util = {}
+
+local locale_section_by_prototype_type = {
+  recipe = "recipe-name",
+  fluid = "fluid-name",
+  ["assembling-machine"] = "entity-name",
+  furnace = "entity-name",
+  ["solar-panel"] = "entity-name",
+  accumulator = "entity-name",
+  boiler = "entity-name",
+  generator = "entity-name",
+  reactor = "entity-name",
+  item = "item-name",
+  ["item-with-entity-data"] = "item-name",
+  module = "item-name",
+  tool = "item-name",
+  ammo = "item-name",
+  armor = "item-name",
+  capsule = "item-name",
+  gun = "item-name",
+  ["repair-tool"] = "item-name",
+  ["rail-planner"] = "item-name",
+  ["selection-tool"] = "item-name",
+  ["copy-paste-tool"] = "item-name",
+  blueprint = "item-name",
+  ["blueprint-book"] = "item-name",
+  ["deconstruction-item"] = "item-name",
+  ["upgrade-item"] = "item-name",
+  ["spidertron-remote"] = "item-name",
+  ["space-platform-starter-pack"] = "item-name"
+}
+
+local recycling_recipe_categories = {
+  recycling = true,
+  ["recycling-or-hand-crafting"] = true
+}
+
+local localised_string_parameter_limit = 20
 
 function util.starts_with(value, prefix)
   return type(value) == "string" and string.sub(value, 1, #prefix) == prefix
@@ -162,6 +200,285 @@ function util.set_to_sorted_array(set)
   end
   table.sort(values)
   return values
+end
+
+local function append_localised_name_candidate(localised_string, candidate)
+  if type(candidate) ~= "table" or not candidate.name then
+    return
+  end
+
+  local prototype_localised_name = type(candidate.prototype) == "table" and candidate.prototype.localised_name or nil
+  local is_internal_name = prototype_localised_name == candidate.name
+    or (
+      type(prototype_localised_name) == "table"
+      and prototype_localised_name[1] == ""
+      and prototype_localised_name[2] == candidate.name
+      and prototype_localised_name[3] == nil
+    )
+
+  if prototype_localised_name ~= nil and not is_internal_name then
+    table.insert(localised_string, table.deepcopy(candidate.prototype.localised_name))
+  end
+
+  local section = candidate.locale_section or locale_section_by_prototype_type[candidate.prototype_type]
+  if section then
+    table.insert(localised_string, {section .. "." .. candidate.name})
+  end
+end
+
+function util.localised_name_from(candidates, fallback)
+  local localised_string = {"?"}
+  local last_name = nil
+
+  if type(candidates) == "table" then
+    for _, candidate in ipairs(candidates) do
+      append_localised_name_candidate(localised_string, candidate)
+      if type(candidate) == "table" and candidate.name then
+        last_name = candidate.name
+      end
+    end
+  end
+
+  while #localised_string >= localised_string_parameter_limit do
+    table.remove(localised_string)
+  end
+
+  table.insert(localised_string, tostring(fallback or last_name or ""))
+  return localised_string
+end
+
+function util.localised_prototype_name(prototype_type, name, prototype, fallback)
+  return util.localised_name_from({
+    {
+      prototype_type = prototype_type,
+      name = name,
+      prototype = prototype
+    }
+  }, fallback or name)
+end
+
+local function append_item_localised_name_candidates(candidates, snapshot, item_name)
+  local item = util.find_item(snapshot, item_name)
+
+  if item then
+    table.insert(candidates, {
+      prototype_type = item.prototype_type,
+      name = item_name,
+      prototype = item.prototype
+    })
+
+    if item.prototype.place_result then
+      table.insert(candidates, {
+        locale_section = "entity-name",
+        name = item.prototype.place_result
+      })
+    end
+
+    if item.prototype.place_as_equipment_result then
+      table.insert(candidates, {
+        locale_section = "equipment-name",
+        name = item.prototype.place_as_equipment_result
+      })
+    end
+  else
+    table.insert(candidates, {
+      prototype_type = "item",
+      name = item_name
+    })
+  end
+end
+
+local function append_fluid_localised_name_candidate(candidates, snapshot, fluid_name)
+  local fluid = snapshot.fluids_by_name and snapshot.fluids_by_name[fluid_name]
+  table.insert(candidates, {
+    prototype_type = "fluid",
+    name = fluid_name,
+    prototype = fluid and fluid.prototype
+  })
+end
+
+local function append_product_localised_name_candidates(candidates, snapshot, product_name, product_type)
+  if not product_name then
+    return
+  end
+
+  if product_type == "fluid" then
+    append_fluid_localised_name_candidate(candidates, snapshot, product_name)
+  else
+    append_item_localised_name_candidates(candidates, snapshot, product_name)
+  end
+end
+
+local function recipe_product_display_name(product)
+  if type(product) ~= "table" then
+    return nil, nil
+  end
+
+  return product.name or product[1], product.type or "item"
+end
+
+local function append_matching_product_candidates(candidates, snapshot, recipe, product_name)
+  local matched = false
+
+  if recipe.result == product_name then
+    append_product_localised_name_candidates(candidates, snapshot, product_name, "item")
+    matched = true
+  end
+
+  if type(recipe.results) == "table" then
+    for _, product in ipairs(recipe.results) do
+      local result_name, result_type = recipe_product_display_name(product)
+      if result_name == product_name then
+        append_product_localised_name_candidates(candidates, snapshot, result_name, result_type)
+        matched = true
+      end
+    end
+  end
+
+  if not matched then
+    append_item_localised_name_candidates(candidates, snapshot, product_name)
+    append_fluid_localised_name_candidate(candidates, snapshot, product_name)
+  end
+end
+
+local function recipe_item_product_names(recipe)
+  local names = {}
+
+  if recipe.result then
+    table.insert(names, recipe.result)
+  end
+
+  if type(recipe.results) == "table" then
+    for _, product in ipairs(recipe.results) do
+      local name = util.product_name(product)
+      if name then
+        table.insert(names, name)
+      end
+    end
+  end
+
+  return names
+end
+
+local function recipe_primary_item_name(recipe)
+  if recipe.result then
+    return recipe.result
+  end
+
+  local item_product_names = recipe_item_product_names(recipe)
+
+  if recipe.main_product ~= nil and recipe.main_product ~= "" then
+    for _, name in ipairs(item_product_names) do
+      if name == recipe.main_product then
+        return name
+      end
+    end
+    return nil, "main-product-is-not-item-result"
+  end
+
+  if recipe.main_product == "" then
+    return nil, "empty-main-product"
+  end
+
+  if #item_product_names == 1 then
+    return item_product_names[1]
+  end
+
+  if #item_product_names == 0 then
+    return nil, "no-item-products"
+  end
+
+  return nil, "multiple-item-products-without-main-product"
+end
+
+local function recipe_uses_recycling_category(recipe)
+  for _, category in ipairs(recipe_categories.get(recipe)) do
+    if recycling_recipe_categories[category] then
+      return true, category
+    end
+  end
+
+  return false
+end
+
+function util.recipe_is_regular_source_for_item(recipe, item_name)
+  if type(recipe) ~= "table" then
+    return false, "invalid-recipe"
+  end
+
+  if recipe.hidden == true then
+    return false, "hidden-source-recipe"
+  end
+
+  if recipe.parameter == true then
+    return false, "parameter-source-recipe"
+  end
+
+  if recipe.normal or recipe.expensive then
+    return false, "difficulty-variant-recipe"
+  end
+
+  local uses_recycling_category, category = recipe_uses_recycling_category(recipe)
+  if uses_recycling_category then
+    return false, "recycling-source-recipe", category
+  end
+
+  local primary_name, reason = recipe_primary_item_name(recipe)
+  if primary_name ~= item_name then
+    return false, reason or "item-is-not-primary-product"
+  end
+
+  return true
+end
+
+function util.regular_source_recipe_names_for_item(snapshot, item_name)
+  local names = {}
+  local excluded = {}
+
+  for _, recipe in ipairs(snapshot.recipes or {}) do
+    if util.recipe_produces_item(recipe.prototype, item_name) then
+      local ok, reason, detail = util.recipe_is_regular_source_for_item(recipe.prototype, item_name)
+      if ok then
+        table.insert(names, recipe.name)
+      else
+        reason = reason or "not-regular-source-recipe"
+        excluded[reason] = (excluded[reason] or 0) + 1
+        if detail then
+          excluded[reason .. ":" .. tostring(detail)] = (excluded[reason .. ":" .. tostring(detail)] or 0) + 1
+        end
+      end
+    end
+  end
+
+  table.sort(names)
+  return names, excluded
+end
+
+function util.localised_recipe_name(snapshot, recipe_name, recipe)
+  local candidates = {
+    {
+      prototype_type = "recipe",
+      name = recipe_name,
+      prototype = recipe
+    }
+  }
+
+  if type(recipe) ~= "table" then
+    return util.localised_name_from(candidates, recipe_name)
+  end
+
+  if recipe.main_product and recipe.main_product ~= "" then
+    append_matching_product_candidates(candidates, snapshot, recipe, recipe.main_product)
+  elseif recipe.result then
+    append_product_localised_name_candidates(candidates, snapshot, recipe.result, "item")
+  elseif type(recipe.results) == "table" then
+    for _, product in ipairs(recipe.results) do
+      local product_name, product_type = recipe_product_display_name(product)
+      append_product_localised_name_candidates(candidates, snapshot, product_name, product_type)
+    end
+  end
+
+  return util.localised_name_from(candidates, recipe_name)
 end
 
 return util

@@ -61,6 +61,36 @@ local function sync_all_forces()
   end
 end
 
+local function force_from_argument(force)
+  if type(force) == "string" then
+    return game.forces[force]
+  end
+
+  local force_type = type(force)
+  if (force_type == "table" or force_type == "userdata") and force.object_name == "LuaForce" and force.valid then
+    return force
+  end
+
+  return nil
+end
+
+remote.add_interface(config.remote_interface_name, {
+  sync_force = function(force)
+    local target_force = force_from_argument(force)
+    if not target_force then
+      return false, "force-not-found"
+    end
+
+    sync_force(target_force)
+    return true
+  end,
+
+  sync_all_forces = function()
+    sync_all_forces()
+    return true
+  end
+})
+
 script.on_init(sync_all_forces)
 script.on_configuration_changed(sync_all_forces)
 

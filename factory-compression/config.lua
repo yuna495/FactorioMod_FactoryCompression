@@ -11,6 +11,7 @@ config.technology_name = "factory-compression-ups-machines"
 config.power_technology_name = "factory-compression-ups-power"
 config.machine_unlock_data_name = "factory-compression-machine-unlocks"
 config.power_unlock_data_name = "factory-compression-power-unlocks"
+config.remote_interface_name = "factory-compression"
 config.overlay_icon = "__FactoryCompression__/graphics/icons/ups-overlay.png"
 
 config.ups_tint = {r = 0.85, g = 0.12, b = 0.12, a = 1.0}

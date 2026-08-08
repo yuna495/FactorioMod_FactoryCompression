@@ -164,19 +164,6 @@ function power.recipe_is_supported_power_entity_related(snapshot, recipe_name, r
   return false
 end
 
-local function source_recipe_names_for_item(snapshot, item_name)
-  local names = {}
-
-  for _, recipe in ipairs(snapshot.recipes) do
-    if util.recipe_produces_item(recipe.prototype, item_name) then
-      table.insert(names, recipe.name)
-    end
-  end
-
-  table.sort(names)
-  return names
-end
-
 local function require_electric_source(entity)
   if type(entity.energy_source) ~= "table" then
     return nil, "missing-energy-source"
@@ -750,7 +737,21 @@ local function build_power_entity(selected, multiplier)
   local generated_name = util.generated_entity_name(selected.source.name)
 
   entity.name = generated_name
-  entity.localised_name = {"entity-name.factory-compression-ups-entity", source.name}
+  entity.localised_name = {
+    "entity-name.factory-compression-ups-entity",
+    util.localised_name_from({
+      {
+        prototype_type = selected.source.prototype_type,
+        name = selected.source.name,
+        prototype = source
+      },
+      {
+        prototype_type = selected.source_item.prototype_type,
+        name = selected.source_item.name,
+        prototype = selected.source_item.prototype
+      }
+    }, selected.source.name)
+  }
   entity.localised_description = {"entity-description.factory-compression-ups-entity"}
   entity.placeable_by = {item = generated_name, count = 1}
 
@@ -793,7 +794,21 @@ local function build_power_item(selected)
 
   item.name = generated_name
   item.place_result = generated_name
-  item.localised_name = {"item-name.factory-compression-ups-item", selected.source.name}
+  item.localised_name = {
+    "item-name.factory-compression-ups-item",
+    util.localised_name_from({
+      {
+        prototype_type = selected.source_item.prototype_type,
+        name = selected.source_item.name,
+        prototype = source_item
+      },
+      {
+        prototype_type = selected.source.prototype_type,
+        name = selected.source.name,
+        prototype = selected.source.prototype
+      }
+    }, selected.source_item.name)
+  }
   item.localised_description = {"item-description.factory-compression-ups-item"}
   appearance.apply_icon_overlay(item, source_item)
 
@@ -841,7 +856,21 @@ local function build_power_recipe(selected, multiplier)
   local recipe = {
     type = "recipe",
     name = generated_name,
-    localised_name = {"recipe-name.factory-compression-ups-power-recipe", selected.source.name},
+    localised_name = {
+      "recipe-name.factory-compression-ups-power-recipe",
+      util.localised_name_from({
+        {
+          prototype_type = selected.source_item.prototype_type,
+          name = selected.source_item.name,
+          prototype = selected.source_item.prototype
+        },
+        {
+          prototype_type = selected.source.prototype_type,
+          name = selected.source.name,
+          prototype = selected.source.prototype
+        }
+      }, selected.source_item.name)
+    },
     enabled = false,
     ingredients = ingredients,
     results = {{type = "item", name = generated_name, amount = 1}},
@@ -885,8 +914,14 @@ local function generate_power_entities(snapshot, selected_entities, multiplier, 
         table.insert(prototypes, item)
         table.insert(prototypes, recipe)
         table.insert(unlock_recipe_names, recipe.name)
+
+        local source_recipe_names = util.regular_source_recipe_names_for_item(snapshot, selected.source_item.name)
+        if #source_recipe_names == 0 then
+          logger:exclude("recipes", selected.source_item.name, "regular-source-recipe-not-found", nil, true)
+        end
+
         unlock_metadata[recipe.name] = {
-          source_recipes = source_recipe_names_for_item(snapshot, selected.source_item.name)
+          source_recipes = source_recipe_names
         }
 
         logger:generated_prototype(generated_kind_for(selected), entity.name)

@@ -208,7 +208,21 @@ local function build_machine_entity(selected, category_map, multiplier)
   local generated_name = util.generated_entity_name(selected.source.name)
 
   entity.name = generated_name
-  entity.localised_name = {"entity-name.factory-compression-ups-entity", source.name}
+  entity.localised_name = {
+    "entity-name.factory-compression-ups-entity",
+    util.localised_name_from({
+      {
+        prototype_type = selected.source.prototype_type,
+        name = selected.source.name,
+        prototype = source
+      },
+      {
+        prototype_type = selected.source_item.prototype_type,
+        name = selected.source_item.name,
+        prototype = selected.source_item.prototype
+      }
+    }, selected.source.name)
+  }
   entity.localised_description = {"entity-description.factory-compression-ups-entity"}
   entity.energy_usage = selected.scaled_energy_usage
   entity.next_upgrade = nil
@@ -240,7 +254,21 @@ local function build_machine_item(selected)
 
   item.name = generated_name
   item.place_result = generated_name
-  item.localised_name = {"item-name.factory-compression-ups-item", selected.source.name}
+  item.localised_name = {
+    "item-name.factory-compression-ups-item",
+    util.localised_name_from({
+      {
+        prototype_type = selected.source_item.prototype_type,
+        name = selected.source_item.name,
+        prototype = source_item
+      },
+      {
+        prototype_type = selected.source.prototype_type,
+        name = selected.source.name,
+        prototype = selected.source.prototype
+      }
+    }, selected.source_item.name)
+  }
   item.localised_description = {"item-description.factory-compression-ups-item"}
   appearance.apply_icon_overlay(item, source_item)
 
@@ -273,7 +301,21 @@ local function build_machine_recipe(selected, multiplier)
   local recipe = {
     type = "recipe",
     name = generated_name,
-    localised_name = {"recipe-name.factory-compression-ups-machine-recipe", selected.source.name},
+    localised_name = {
+      "recipe-name.factory-compression-ups-machine-recipe",
+      util.localised_name_from({
+        {
+          prototype_type = selected.source_item.prototype_type,
+          name = selected.source_item.name,
+          prototype = selected.source_item.prototype
+        },
+        {
+          prototype_type = selected.source.prototype_type,
+          name = selected.source.name,
+          prototype = selected.source.prototype
+        }
+      }, selected.source_item.name)
+    },
     enabled = false,
     ingredients = ingredients,
     results = {{type = "item", name = generated_name, amount = 1}},
@@ -296,19 +338,6 @@ local function copy_unlock_techs(snapshot, recipe_name)
     end
   end
   return unlocks
-end
-
-local function source_recipe_names_for_item(snapshot, item_name)
-  local names = {}
-
-  for _, recipe in ipairs(snapshot.recipes) do
-    if util.recipe_produces_item(recipe.prototype, item_name) then
-      table.insert(names, recipe.name)
-    end
-  end
-
-  table.sort(names)
-  return names
 end
 
 local function scale_item_number(value, multiplier)
@@ -523,7 +552,7 @@ local function build_batch_recipe(snapshot, source_recipe, source_recipe_name, m
   recipe.name = util.batch_recipe_name(source_recipe_name)
   recipe.localised_name = {
     "recipe-name.factory-compression-batch-recipe",
-    source_recipe_name,
+    util.localised_recipe_name(snapshot, source_recipe_name, source_recipe),
     tostring(multiplier)
   }
   recipe.enabled = false
@@ -617,8 +646,14 @@ local function generate_machines(snapshot, selected_machines, category_map, mult
         table.insert(prototypes, item)
         table.insert(prototypes, recipe)
         table.insert(unlock_recipe_names, recipe.name)
+
+        local source_recipe_names = util.regular_source_recipe_names_for_item(snapshot, selected.source_item.name)
+        if #source_recipe_names == 0 then
+          logger:exclude("recipes", selected.source_item.name, "regular-source-recipe-not-found", nil, true)
+        end
+
         unlock_metadata[recipe.name] = {
-          source_recipes = source_recipe_names_for_item(snapshot, selected.source_item.name)
+          source_recipes = source_recipe_names
         }
 
         logger:generated_prototype("machines", entity.name)

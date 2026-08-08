@@ -4,7 +4,7 @@
     "title":  "Factory Compression",
     "author":  "yuna495",
     "factorio_version":  "2.0",
-    "description":  "",
+    "description":  "Adds high-throughput UPS-focused variants of late-game machines, power generators, and storage entities without replacing the original prototypes.",
     "dependencies":  [
         "base \u003e= 2.0"
     ]
