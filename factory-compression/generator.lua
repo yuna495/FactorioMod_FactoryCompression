@@ -559,6 +559,7 @@ local function build_batch_recipe(snapshot, source_recipe, source_recipe_name, m
   recipe.ingredients = scaled_payload.ingredients
   recipe.results = scaled_payload.results
   recipe.auto_recycle = false
+  recipe.show_amount_in_title = false
   recipe.hidden = false
   recipe.hide_from_player_crafting = true
   recipe.hidden_in_factoriopedia = true
